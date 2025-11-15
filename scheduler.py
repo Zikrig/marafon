@@ -150,17 +150,6 @@ async def check_and_send_reminders(bot: Bot):
             for user_id in users:
                 await safe_send_message(bot, user_id, message)
                 await asyncio.sleep(0.05)
-            
-            # Отправка анонса следующего эфира (если есть)
-            if broadcast["day"] < len(BROADCASTS):
-                next_broadcast = BROADCASTS[broadcast["day"]]  # Индекс = день (day начинается с 1, массив с 0)
-                next_message = get_next_broadcast_announcement(next_broadcast)
-                if next_message:
-                    await asyncio.sleep(1)  # Небольшая задержка между сообщениями
-                    logger.info(f"Отправка анонса следующего эфира (день {next_broadcast['day']})")
-                    for user_id in users:
-                        await safe_send_message(bot, user_id, next_message)
-                        await asyncio.sleep(0.05)
     
     # Сообщение о завершении марафона
     if current_time == MARATHON_END_DATE:

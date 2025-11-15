@@ -79,27 +79,49 @@ async def safe_send_message(bot: Bot, chat_id: int, text: str, photo: str = None
 async def safe_edit_message(callback: types.CallbackQuery, text: str, reply_markup=None):
     """Безопасное редактирование сообщения с обработкой медиа"""
     try:
-        # Пытаемся отредактировать текст
+        # Пытаемся отредактировать текст (отключаем Markdown для избежания ошибок парсинга)
         if callback.message.text:
-            await callback.message.edit_text(text, reply_markup=reply_markup)
+            await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode=None)
+            return
         elif callback.message.caption:
             # Если сообщение с медиа - редактируем подпись
-            await callback.message.edit_caption(caption=text, reply_markup=reply_markup)
-        else:
-            # Если не можем отредактировать - удаляем и отправляем новое
-            try:
-                await callback.message.delete()
-            except:
-                pass
-            await callback.message.answer(text, reply_markup=reply_markup)
+            await callback.message.edit_caption(caption=text, reply_markup=reply_markup, parse_mode=None)
+            return
     except Exception as e:
         # Если редактирование не удалось - удаляем и отправляем новое
         logger.warning(f"Не удалось отредактировать сообщение: {e}. Отправляем новое.")
+    
+    # Если редактирование не удалось или сообщение без текста/подписи - отправляем новое
+    try:
+        await callback.message.delete()
+    except Exception as delete_error:
+        logger.debug(f"Не удалось удалить сообщение: {delete_error}")
+    
+    # Отправляем новое сообщение через бота напрямую
+    try:
+        chat_id = callback.message.chat.id
+        # Явно отключаем парсинг, чтобы избежать ошибок с Markdown
+        await bot.send_message(
+            chat_id=chat_id, 
+            text=text, 
+            reply_markup=reply_markup, 
+            parse_mode=None
+        )
+        logger.info(f"Сообщение успешно отправлено пользователю {chat_id}")
+    except Exception as answer_error:
+        logger.error(f"Не удалось отправить новое сообщение пользователю {callback.message.chat.id}: {answer_error}")
+        # Пытаемся отправить без форматирования вообще
         try:
-            await callback.message.delete()
-        except:
-            pass
-        await callback.message.answer(text, reply_markup=reply_markup)
+            # Экранируем все специальные символы
+            escaped_text = text.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)')
+            await bot.send_message(
+                chat_id=chat_id, 
+                text=escaped_text, 
+                reply_markup=reply_markup, 
+                parse_mode=None
+            )
+        except Exception as final_error:
+            logger.error(f"Критическая ошибка при отправке сообщения: {final_error}")
 
 
 async def check_subscription(user_id: int) -> bool:
@@ -177,27 +199,34 @@ async def cmd_start(message: types.Message):
 @dp.callback_query(lambda c: c.data == "participate")
 async def process_participate(callback: types.CallbackQuery):
     """Обработчик нажатия кнопки 'Участвовать'"""
-    user_id = callback.from_user.id
-    
-    # Проверяем подписку
-    if await check_subscription(user_id):
-        await mark_subscribed(user_id)
-        await safe_edit_message(
-            callback,
-            MESSAGE_REGISTRATION,
-            reply_markup=None
-        )
-        await callback.answer("Регистрация успешна! 🎉")
-    else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я подписался(ась)", callback_data="check_subscription")]
-        ])
-        await safe_edit_message(
-            callback,
-            MESSAGE_WELCOME + "\n\n⚠️ Пожалуйста, подпишись на все каналы выше, затем нажми кнопку.",
-            reply_markup=keyboard
-        )
-        await callback.answer("Пожалуйста, подпишись на все каналы")
+    try:
+        user_id = callback.from_user.id
+        
+        # Проверяем подписку
+        if await check_subscription(user_id):
+            await mark_subscribed(user_id)
+            await safe_edit_message(
+                callback,
+                MESSAGE_REGISTRATION,
+                reply_markup=None
+            )
+            await callback.answer("Регистрация успешна! 🎉")
+        else:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я подписался(ась)", callback_data="check_subscription")]
+            ])
+            await safe_edit_message(
+                callback,
+                MESSAGE_WELCOME + "\n\n⚠️ Пожалуйста, подпишись на все каналы выше, затем нажми кнопку.",
+                reply_markup=keyboard
+            )
+            await callback.answer("Пожалуйста, подпишись на все каналы")
+    except Exception as e:
+        logger.error(f"Ошибка в process_participate: {e}", exc_info=True)
+        try:
+            await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
+        except:
+            pass
 
 
 @dp.callback_query(lambda c: c.data == "check_subscription")

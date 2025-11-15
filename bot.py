@@ -181,13 +181,13 @@ async def cmd_start(message: types.Message):
         
         # Используем безопасную отправку с повторными попытками
         try:
-            await message.answer(MESSAGE_WELCOME, reply_markup=keyboard)
+            await message.answer(MESSAGE_WELCOME, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
         except TelegramNetworkError as e:
             # При сетевой ошибке пробуем повторно
             logger.warning(f"Сетевая ошибка при отправке приветствия, повторная попытка: {e}")
             await asyncio.sleep(2)
             try:
-                await message.answer(MESSAGE_WELCOME, reply_markup=keyboard)
+                await message.answer(MESSAGE_WELCOME, reply_markup=keyboard, parse_mode=ParseMode.MARKDOWN)
             except Exception as e2:
                 logger.error(f"Не удалось отправить приветственное сообщение после повторной попытки: {e2}")
         except Exception as e:
@@ -205,20 +205,31 @@ async def process_participate(callback: types.CallbackQuery):
         # Проверяем подписку
         if await check_subscription(user_id):
             await mark_subscribed(user_id)
-            await safe_edit_message(
-                callback,
+            # Убираем кнопку из старого сообщения
+            try:
+                if callback.message.text:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+                elif callback.message.caption:
+                    await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception as e:
+                logger.debug(f"Не удалось убрать кнопку из сообщения: {e}")
+            
+            # Отправляем новое короткое сообщение о регистрации
+            await callback.message.answer(
                 MESSAGE_REGISTRATION,
-                reply_markup=None
+                reply_markup=None,
+                parse_mode=None
             )
             await callback.answer("Регистрация успешна! 🎉")
         else:
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Я подписался(ась)", callback_data="check_subscription")]
             ])
-            await safe_edit_message(
-                callback,
+            # Отправляем новое сообщение вместо редактирования
+            await callback.message.answer(
                 MESSAGE_WELCOME + "\n\n⚠️ Пожалуйста, подпишись на все каналы выше, затем нажми кнопку.",
-                reply_markup=keyboard
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN
             )
             await callback.answer("Пожалуйста, подпишись на все каналы")
     except Exception as e:
@@ -232,21 +243,30 @@ async def process_participate(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "check_subscription")
 async def process_check_subscription(callback: types.CallbackQuery):
     """Обработчик проверки подписки"""
-    user_id = callback.from_user.id
-    
-    if await check_subscription(user_id):
-        await mark_subscribed(user_id)
-        await safe_edit_message(
-            callback,
-            MESSAGE_REGISTRATION,
-            reply_markup=None
-        )
-        await callback.answer("Регистрация успешна! 🎉")
-    else:
-        await callback.answer(
-            "❌ Ты еще не подписана на все каналы. Пожалуйста, подпишись и попробуй снова.",
-            show_alert=True
-        )
+    try:
+        user_id = callback.from_user.id
+        
+        if await check_subscription(user_id):
+            await mark_subscribed(user_id)
+            # Отправляем новое сообщение вместо редактирования
+            # Используем parse_mode=None, так как в MESSAGE_REGISTRATION нет Markdown ссылок
+            await callback.message.answer(
+                MESSAGE_REGISTRATION,
+                reply_markup=None,
+                parse_mode=None
+            )
+            await callback.answer("Регистрация успешна! 🎉")
+        else:
+            await callback.answer(
+                "❌ Ты еще не подписана на все каналы. Пожалуйста, подпишись и попробуй снова.",
+                show_alert=True
+            )
+    except Exception as e:
+        logger.error(f"Ошибка в process_check_subscription: {e}", exc_info=True)
+        try:
+            await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
+        except:
+            pass
 
 
 @dp.message(Command("stats"))

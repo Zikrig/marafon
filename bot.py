@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -18,8 +19,16 @@ from config import (
     CHANNEL_NATALIA_ID,
     CHANNEL_MARIA_ID
 )
-from database import init_db, add_user, mark_subscribed, is_registered
-from messages import MESSAGE_WELCOME, MESSAGE_REGISTRATION
+from database import (
+    init_db, 
+    add_user, 
+    mark_subscribed, 
+    is_registered,
+    get_eligible_raffle_participants,
+    update_user_subscription_status,
+    save_raffle_winners
+)
+from messages import MESSAGE_WELCOME, MESSAGE_REGISTRATION, get_raffle_message
 from scheduler import scheduler_loop
 
 # Настройка логирования
@@ -284,6 +293,114 @@ async def cmd_stats(message: types.Message):
     from database import get_all_registered_users
     users = await get_all_registered_users()
     await message.answer(f"📊 Всего зарегистрированных пользователей: {len(users)}")
+
+
+@dp.message(Command("game"))
+async def cmd_game(message: types.Message):
+    """Команда для проведения розыгрыша (только для админа)"""
+    # Проверка прав администратора
+    if not ADMIN_IDS:
+        await message.answer("⚠️ Административная команда недоступна")
+        return
+    
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет прав для выполнения этой команды")
+        return
+    
+    admin_id = message.from_user.id
+    
+    try:
+        await message.answer("🎲 Провожу розыгрыш...")
+        
+        # Получаем всех потенциальных участников с данными
+        participants = await get_eligible_raffle_participants()
+        
+        if not participants:
+            await message.answer("⚠️ Нет участников для розыгрыша")
+            return
+        
+        logger.info(f"Найдено {len(participants)} потенциальных участников")
+        
+        # Проверяем подписку всех участников
+        eligible_participants = []
+        for participant in participants:
+            user_id = participant["user_id"]
+            username = participant.get("username")
+            
+            # Проверяем, что у пользователя есть username (обязательное условие)
+            if not username:
+                logger.debug(f"Пользователь {user_id} исключен: нет username")
+                continue
+            
+            # Проверяем подписку
+            is_subscribed = await check_subscription(user_id)
+            
+            # Обновляем статус подписки в базе
+            await update_user_subscription_status(user_id, is_subscribed)
+            
+            if is_subscribed:
+                eligible_participants.append(participant)
+            else:
+                logger.debug(f"Пользователь {user_id} (@{username}) исключен: не подписан на все каналы")
+        
+        logger.info(f"После проверки подписки осталось {len(eligible_participants)} участников")
+        
+        if len(eligible_participants) == 0:
+            await message.answer("⚠️ Нет участников, соответствующих условиям (подписка + username)")
+            return
+        
+        # Определяем количество победителей (максимум 3, но может быть меньше)
+        num_winners = min(len(eligible_participants), 3)
+        
+        # Случайный выбор победителей
+        if len(eligible_participants) > 3:
+            winners = random.sample(eligible_participants, 3)
+        else:
+            # Если участников меньше 3, выбираем всех
+            winners = eligible_participants.copy()
+            # Перемешиваем для случайности
+            random.shuffle(winners)
+        
+        # Формируем данные победителей
+        prizes = [
+            {"place": 1, "amount": "10 000 ₽"},
+            {"place": 2, "amount": "5 000 ₽"},
+            {"place": 3, "amount": "3 000 ₽"}
+        ]
+        
+        winners_data = []
+        for i in range(num_winners):
+            winner = winners[i]
+            prize = prizes[i]
+            winner_data = {
+                "prize_place": prize["place"],
+                "prize_amount": prize["amount"],
+                "user_id": winner["user_id"],
+                "username": winner.get("username"),
+                "first_name": winner.get("first_name")
+            }
+            winners_data.append(winner_data)
+            
+            # Формируем отображаемое имя (только username, так как только они участвуют)
+            username = winner.get("username", "Неизвестный")
+            display_name = f"@{username}" if username != "Неизвестный" else username
+            
+            logger.info(f"Победитель {prize['place']} места ({prize['amount']}): {display_name} (ID: {winner['user_id']})")
+        
+        # Сохраняем результаты в базу данных
+        await save_raffle_winners(winners_data)
+        logger.info("Результаты розыгрыша сохранены в базу данных")
+        
+        # Формируем сообщение с результатами
+        result_message = get_raffle_message(winners_data)
+        
+        # Отправляем результаты только админу
+        await message.answer(result_message, parse_mode=None)
+        await message.answer(f"✅ Розыгрыш проведен! Участников: {len(eligible_participants)}, победителей: {num_winners}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проведении розыгрыша через команду /game: {e}", exc_info=True)
+        await message.answer(f"❌ Ошибка при проведении розыгрыша: {e}")
 
 
 @dp.message(Command("send"))

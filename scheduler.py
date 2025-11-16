@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter, Telegra
 from config import (
     BROADCASTS, 
     MARATHON_END_DATE, 
-    RAFFLE_DATE, 
+    # RAFFLE_DATE, 
     CHANNEL_MAIN,
     CHANNEL_MAIN_ID,
     CHANNEL_OKSANA_ID,
@@ -136,12 +136,12 @@ async def check_and_send_reminders(bot: Bot):
                 await asyncio.sleep(0.05)
         
         # За 5 минут до эфира
-        if current_time == reminders["5min_before"]["date"]:
-            message = get_5min_before_message(broadcast)
-            logger.info(f"Отправка напоминания 'за 5 минут до эфира' для эфира {broadcast['day']}")
-            for user_id in users:
-                await safe_send_message(bot, user_id, message)
-                await asyncio.sleep(0.05)
+        # if current_time == reminders["5min_before"]["date"]:
+        #     message = get_5min_before_message(broadcast)
+        #     logger.info(f"Отправка напоминания 'за 5 минут до эфира' для эфира {broadcast['day']}")
+        #     for user_id in users:
+        #         await safe_send_message(bot, user_id, message)
+        #         await asyncio.sleep(0.05)
         
         # После эфира
         if current_time == reminders["after"]["date"]:
@@ -159,9 +159,9 @@ async def check_and_send_reminders(bot: Bot):
             await asyncio.sleep(0.05)
     
     # Проведение розыгрыша
-    if current_time == RAFFLE_DATE:
-        logger.info("Начало проведения розыгрыша")
-        await conduct_raffle(bot)
+    # if current_time == RAFFLE_DATE:
+    #     logger.info("Начало проведения розыгрыша")
+    #     await conduct_raffle(bot)
 
 
 async def conduct_raffle(bot: Bot):
